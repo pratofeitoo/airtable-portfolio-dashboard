@@ -60,3 +60,20 @@ python3 scripts/refresh.py --raw /caminho/privado/coleta.json
 `--raw` é exclusivo da validação local; o workflow sempre consulta a API. O arquivo deve conter as cinco bases, esquemas e tabelas completos. Não comite arquivos brutos de coleta.
 
 Referências: [tokens do Airtable](https://support.airtable.com/articles/9934989703-creating-personal-access-tokens), [limites da API](https://support.airtable.com/articles/7735693959-Managing-API-call-limits-in-Airtable), [workflows do Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
+
+
+## Histórico e reprodução por execução
+
+Cada execução de `python3 scripts/refresh.py` cria uma pasta exclusiva em `runs/AAAA-MM-DD_HH-MM-SS_ID/`, com data e hora de São Paulo. Pastas anteriores nunca são sobrescritas. Use `--runs-root /caminho/do/historico` para outro destino.
+
+A pasta contém o dashboard (`index.html`), snapshot normalizado (`snapshot.json`), relatório Markdown pt-BR, CSVs de todos os itens / tarefas / abertas, configuração (`sources.json`), template usado e manifesto SHA-256. `run.json` registra o estado `running`, `complete` ou `failed`, o modo, a data da coleta e as contagens. Datas, indicadores e tabelas do relatório são calculados a partir dos registros de cada coleta.
+
+Para reproduzir os relatórios de uma execução concluída sem acessar o Airtable:
+
+```sh
+python3 scripts/refresh.py --replay /caminho/runs/AAAA-MM-DD_HH-MM-SS_ID
+```
+
+O replay preserva a data da coleta e o template salvo; sua nova pasta recebe a data/hora real da execução. O snapshot contém apenas os campos normalizados destinados ao painel, sem credenciais ou tabelas auxiliares brutas. Pastas locais ficam fora do Git. A saída `_site/` continua recebendo a última geração para publicação.
+
+No GitHub Actions, cada execução guarda `runs/` como artefato `relatorio-RUN_ID-TENTATIVA`, inclusive em caso de falha. O prazo de retenção é **90 dias**, sujeito aos limites do GitHub. Baixe os artefatos para um arquivo permanente se precisar guardar o histórico além desse prazo.

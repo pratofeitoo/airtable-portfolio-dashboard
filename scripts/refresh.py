@@ -1,5 +1,6 @@
 """Read-only Airtable collection and atomic static-site build (Python standard library)."""
 import argparse
+import shutil
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import history
 
 ROOT = Path(__file__).resolve().parents[1]
 TZ = ZoneInfo('America/Sao_Paulo')
@@ -196,14 +200,40 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--raw', type=Path, help='Coleta já concluída, somente para validação local.')
     parser.add_argument('--output', type=Path, default=ROOT/'_site')
+    parser.add_argument('--runs-root', type=Path, default=ROOT/'runs')
+    parser.add_argument('--replay', type=Path, help='Regerar artefatos de uma pasta de execução, sem consulta remota.')
     args = parser.parse_args()
-    sources = json.loads((ROOT/'sources.json').read_text())
+    if args.raw and args.replay:
+        parser.error('Escolha --raw ou --replay.')
     now = datetime.now(timezone.utc)
-    raw = json.loads(args.raw.read_text()) if args.raw else collect(Airtable(os.getenv('AIRTABLE_TOKEN')), sources)
-    rows = normalize(sources, raw, now)
-    build(rows, sources, now, args.output)
-    counts = {kind: sum(r['tipo'] == kind for r in rows) for kind in ['Tarefa','Subtarefa','Documento']}
-    print(json.dumps({'collectedAt': now.isoformat(), 'counts': counts}, ensure_ascii=False))
+    folder,state = history.start(args.runs_root, now.astimezone(TZ), 'replay' if args.replay or args.raw else 'live')
+    try:
+        sources = json.loads((ROOT/'sources.json').read_text())
+        if args.replay:
+            snapshot=json.loads((args.replay/'snapshot.json').read_text())
+            rows=snapshot['records']
+            now=datetime.fromisoformat(snapshot['metadata']['collectedAt'])
+            sources=json.loads((args.replay/'sources.json').read_text())
+            state['replay_source']=str(args.replay.resolve())
+        else:
+            raw=json.loads(args.raw.read_text()) if args.raw else collect(Airtable(os.getenv('AIRTABLE_TOKEN')), sources)
+            rows=normalize(sources,raw,now)
+        template=(args.replay/'template.html').read_text() if args.replay else (ROOT/'index.html').read_text()
+        (folder/'template.html').write_text(template)
+        state['git_commit']=os.getenv('GITHUB_SHA')
+        # Archive a complete generation before updating the deployment directory.
+        build(rows,sources,now,folder,template=template)
+        history.reports(folder,rows,sources,now.astimezone(TZ))
+        args.output.mkdir(parents=True,exist_ok=True)
+        for name in ['index.html','snapshot.json','.nojekyll']:
+            shutil.copy2(folder/name,args.output/name)
+        state.update(status='complete',collected_at=now.isoformat(),completed_at=datetime.now(timezone.utc).isoformat(),counts={kind:sum(r['tipo']==kind for r in rows) for kind in ['Tarefa','Subtarefa','Documento']})
+        history.finish(folder,state)
+        print(json.dumps({'run_directory':str(folder),'counts':state['counts']},ensure_ascii=False))
+    except Exception:
+        state.update(status='failed',completed_at=datetime.now(timezone.utc).isoformat())
+        history.finish(folder,state)
+        raise
 
 if __name__ == '__main__':
     try:
